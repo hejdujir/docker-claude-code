@@ -15,17 +15,15 @@ dcc                 # Claude Code right in this project
 ## Installation
 
 ```bash
-brew tap hejdujir/tap
-brew install dcc
-```
-
-Without Homebrew:
-
-```bash
 curl -fsSL https://raw.githubusercontent.com/hejdujir/docker-claude-code/main/install.sh | bash
 ```
 
 You need a running Docker (Docker Desktop, Colima, OrbStack).
+
+Homebrew installation (`brew tap hejdujir/tap && brew install dcc`) isn't
+set up yet — it needs a dedicated `hejdujir/homebrew-tap` repo and a tagged
+release, neither of which exist yet. `dcc.rb` in this repo is ready to be
+copied over once that happens; until then, use the install script above.
 
 ## How it works
 
