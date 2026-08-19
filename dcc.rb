@@ -13,7 +13,7 @@ class Dcc < Formula
 
   def caveats
     <<~EOS
-      Requires a running Docker (Docker Desktop, Colima, OrbStack…).
+      Requires a running Docker (Docker Desktop, Colima, OrbStack, ...).
 
       Start in the directory that should be the home for Claude Code:
         mkdir -p ~/dev/claude && cd ~/dev/claude
