@@ -15,15 +15,23 @@ dcc                 # Claude Code right in this project
 ## Installation
 
 ```bash
+brew tap hejdujir/tap
+brew install dcc
+```
+
+Homebrew will refuse to load a freshly tapped formula until you trust it:
+
+```bash
+brew trust hejdujir/tap
+```
+
+Without Homebrew:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/hejdujir/docker-claude-code/main/install.sh | bash
 ```
 
 You need a running Docker (Docker Desktop, Colima, OrbStack).
-
-Homebrew installation (`brew tap hejdujir/tap && brew install dcc`) isn't
-set up yet — it needs a dedicated `hejdujir/homebrew-tap` repo and a tagged
-release, neither of which exist yet. `dcc.rb` in this repo is ready to be
-copied over once that happens; until then, use the install script above.
 
 ## How it works
 
@@ -119,6 +127,10 @@ immediately on the host – work inside git.
 
 ## Releasing a new version
 
-1. Bump `DCC_VERSION` in `bin/dcc`, tag `v0.x.y`, push.
-2. `shasum -a 256` the GitHub tarball → into `Formula/dcc.rb`.
-3. Copy the formula into your own tap (`hejdujir/homebrew-tap`).
+1. Bump `DCC_VERSION` in `bin/dcc`, commit, tag `v0.x.y`, push (`git push origin v0.x.y`).
+2. Update the `url` in `dcc.rb` to point at the new tag, then
+   `shasum -a 256` the tarball and update `sha256` in `dcc.rb`.
+3. Copy the updated `dcc.rb` into `Formula/dcc.rb` in
+   [hejdujir/homebrew-tap](https://github.com/hejdujir/homebrew-tap), commit, push.
+4. `brew upgrade dcc` (or `brew reinstall dcc` if the version didn't change
+   but the formula did).
