@@ -12,14 +12,14 @@ command -v curl >/dev/null || { echo "curl is missing" >&2; exit 1; }
 command -v tar  >/dev/null || { echo "tar is missing" >&2; exit 1; }
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-echo "Downloading $REPO@$REF…"
+echo "Downloading $REPO@$REF..."
 curl -fsSL "https://github.com/$REPO/archive/$REF.tar.gz" | tar -xz -C "$tmp" --strip-components=1
 
 mkdir -p "$PREFIX/bin" "$SHARE"
 install -m 0755 "$tmp/bin/dcc" "$PREFIX/bin/dcc"
 rm -rf "$SHARE/image"; cp -R "$tmp/image" "$SHARE/image"
 
-echo "✓ installed: $PREFIX/bin/dcc"
+echo "installed: $PREFIX/bin/dcc"
 case ":$PATH:" in
   *":$PREFIX/bin:"*) ;;
   *) echo "  Add to PATH:  export PATH=\"$PREFIX/bin:\$PATH\"" ;;

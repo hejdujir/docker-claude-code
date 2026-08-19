@@ -191,7 +191,7 @@ register_home() {
 image_exists() { docker image inspect "$1" >/dev/null 2>&1; }
 
 build_base() {
-    info "building base image $BASE_IMAGE…"
+    info "building base image $BASE_IMAGE..."
     docker build -t "$BASE_IMAGE" "$@" "$IMAGE_DIR"
     ok "image $BASE_IMAGE ready"
 }
@@ -204,7 +204,7 @@ ensure_up() {
         [ "$IMAGE" = "$BASE_IMAGE" ] || die "image $IMAGE doesn't exist – try 'dcc reset'"
         build_base
     }
-    info "starting container $PROJECT…"
+    info "starting container $PROJECT..."
     HOST_UID="$(id -u)" HOST_GID="$(id -g)" TZ="${TZ:-$(host_tz)}" compose up -d
     local i
     for i in $(seq 40); do
@@ -330,7 +330,7 @@ ide/
 EOF
 
     printf '\n'
-    ok "instance ${c_b}$PROJECT${c_0} created (ports $PORT_BASE–$((PORT_BASE+9)))"
+    ok "instance ${c_b}$PROJECT${c_0} created (ports $PORT_BASE-$((PORT_BASE+9)))"
 
     image_exists "$BASE_IMAGE" || build_base
     ensure_up
@@ -386,7 +386,7 @@ cmd_snapshot() {
     load_instance
     running || die "container is not running"
     local tag="${1:-$PROJECT:snapshot}"
-    info "baking the current container state into $tag…"
+    info "baking the current container state into $tag..."
     docker commit "$PROJECT" "$tag" >/dev/null
     IMAGE="$tag"; save_instance; generate_compose
     ok "done – the instance now starts from $tag"
@@ -406,7 +406,7 @@ cmd_doctor() {
     printf '%s\n' "instance: ${c_b}$PROJECT${c_0}"
     printf '%s\n' "home:     $HOME_DIR"
     printf '%s\n' "image:    $IMAGE $(image_exists "$IMAGE" && echo "${c_g}(exists)${c_0}" || echo "${c_r}(missing)${c_0}")"
-    printf '%s\n' "ports:    $PORT_BASE–$((PORT_BASE+9))"
+    printf '%s\n' "ports:    $PORT_BASE-$((PORT_BASE+9))"
     running && ok "container is running" || warn "container is not running"
     local host cont mode
     while IFS='|' read -r host cont mode; do
