@@ -57,7 +57,7 @@ need_docker() {
 # Instance: discovery, loading
 # ---------------------------------------------------------------------------
 
-HOME_DIR=""; PROJECT=""; IMAGE=""; PORT_BASE=""
+HOME_DIR=""; PROJECT=""; IMAGE=""; PORT_BASE=""; OAUTH_PORT=""
 
 # 1) .dcc/ in the current directory or an ancestor
 find_home_upwards() {
@@ -95,6 +95,22 @@ load_instance() {
     or move into one of the mounted directories (${c_b}dcc homes${c_0})."
     # shellcheck disable=SC1090
     . "$HOME_DIR/.dcc/instance"
+
+    # Migrate instances created before OAUTH_PORT was tracked: infer
+    # ownership from whatever the existing compose file already claims,
+    # so upgrading dcc doesn't silently drop (or duplicate) the mapping.
+    if [ -z "${OAUTH_PORT:-}" ]; then
+        if [ -f "$HOME_DIR/.dcc/docker-compose.yml" ] && grep -q '54545' "$HOME_DIR/.dcc/docker-compose.yml" 2>/dev/null; then
+            OAUTH_PORT=1
+        else
+            OAUTH_PORT=0
+        fi
+        save_instance
+    fi
+
+    if port_base_taken "$PORT_BASE"; then
+        warn "port block $PORT_BASE-$((PORT_BASE+9)) is also claimed by another dcc instance – only one of them will actually bind. Run 'dcc homes' to see who else has it, then fix one side by hand: edit PORT_BASE in its .dcc/instance and run 'dcc mount add|rm' (or 'dcc reset') to regenerate."
+    fi
 }
 
 compose() { docker compose --project-directory "$HOME_DIR/.dcc" "$@"; }
@@ -158,7 +174,7 @@ generate_compose() {
         echo "      - \"$PROJECT-cache:/home/dev/.cache\""
         echo "    ports:"
         echo "      - \"127.0.0.1:$PORT_BASE-$((PORT_BASE+9)):$PORT_BASE-$((PORT_BASE+9))\""
-        if port_free 54545; then
+        if [ "$OAUTH_PORT" = "1" ]; then
             echo "      - \"127.0.0.1:54545:54545\"   # OAuth callback"
         fi
         echo "    extra_hosts:"
@@ -175,6 +191,7 @@ save_instance() {
 PROJECT="$PROJECT"
 IMAGE="$IMAGE"
 PORT_BASE="$PORT_BASE"
+OAUTH_PORT="$OAUTH_PORT"
 DCC_VERSION="$DCC_VERSION"
 EOF
 }
@@ -190,8 +207,33 @@ project_taken() {
     local name="$1" home
     [ -f "$REGISTRY" ] || return 1
     while IFS= read -r home; do
-        [ -n "$home" ] && [ -f "$home/.dcc/instance" ] || continue
+        [ -n "$home" ] && [ "$home" != "$HOME_DIR" ] && [ -f "$home/.dcc/instance" ] || continue
         ( PROJECT=""; . "$home/.dcc/instance"; [ "$PROJECT" = "$name" ] ) && return 0
+    done < "$REGISTRY"
+    return 1
+}
+
+# Is port block $1 already used as PORT_BASE by some other registered instance?
+# port_free() only sees ports that are *currently* bound, so without this,
+# two instances created while one of them is stopped can end up with the
+# same block and only one actually gets to bind it once both are running.
+port_base_taken() {
+    local target="$1" home
+    [ -f "$REGISTRY" ] || return 1
+    while IFS= read -r home; do
+        [ -n "$home" ] && [ "$home" != "$HOME_DIR" ] && [ -f "$home/.dcc/instance" ] || continue
+        ( PORT_BASE=""; . "$home/.dcc/instance"; [ "$PORT_BASE" = "$target" ] ) && return 0
+    done < "$REGISTRY"
+    return 1
+}
+
+# Does some other registered instance already own the 54545 OAuth port?
+oauth_port_taken() {
+    local home
+    [ -f "$REGISTRY" ] || return 1
+    while IFS= read -r home; do
+        [ -n "$home" ] && [ "$home" != "$HOME_DIR" ] && [ -f "$home/.dcc/instance" ] || continue
+        ( OAUTH_PORT=""; . "$home/.dcc/instance"; [ "$OAUTH_PORT" = "1" ] ) && return 0
     done < "$REGISTRY"
     return 1
 }
@@ -326,9 +368,11 @@ cmd_create() {
     PORT_BASE=""
     local p
     for p in $(seq 8080 10 8500); do
-        if port_free "$p" && port_free "$((p+9))"; then PORT_BASE="$p"; break; fi
+        if port_free "$p" && port_free "$((p+9))" && ! port_base_taken "$p"; then PORT_BASE="$p"; break; fi
     done
-    [ -n "$PORT_BASE" ] || die "couldn't find a free port block between 8080–8509"
+    [ -n "$PORT_BASE" ] || die "couldn't find a free port block between 8080-8509"
+
+    if port_free 54545 && ! oauth_port_taken; then OAUTH_PORT=1; else OAUTH_PORT=0; fi
 
     IMAGE="$BASE_IMAGE"
 
@@ -443,7 +487,11 @@ cmd_doctor() {
     else
         warn "not logged in – run 'dcc login'"
     fi
-    port_free 54545 || warn "port 54545 is taken (another instance?) – paste the code manually when logging in"
+    if [ "$OAUTH_PORT" = "1" ]; then
+        running || port_free 54545 || warn "port 54545 is claimed by this instance but is currently occupied by something else"
+    else
+        warn "OAuth callback port 54545 belongs to another dcc instance – paste the code manually when logging in"
+    fi
 }
 
 cmd_homes() {
