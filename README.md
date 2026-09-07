@@ -74,6 +74,7 @@ sessions open at once across different projects.
 | `dcc <folder>` | Claude Code in a specific folder |
 | `dcc login` / `shell` / `exec -- <cmd>` | log in, bash, one-off command |
 | `dcc mount list\|add\|rm` | manage mounts (updates compose and restarts) |
+| `dcc port list\|add\|rm` | forward an extra host<->container port (updates compose and restarts) |
 | `dcc up\|down\|restart\|status\|logs` | container lifecycle |
 | `dcc doctor` | what's missing, what's not running, what's not logged in |
 | `dcc homes` | list of all instances and their mounts |
@@ -112,6 +113,30 @@ one (`dcc-<folder>-<hash>`).
 Port `54545` (OAuth callback) is only published to the instance that grabs
 it first; for the others you'll copy the code from the browser by hand
 during `dcc login`. `dcc doctor` will flag this.
+
+## Reaching a web app running inside the container
+
+Every instance's whole port block maps 1:1 to the host (host port ==
+container port), so the easiest way to preview something is to make it
+listen on a port inside your instance's block (`dcc doctor` shows it, e.g.
+`8080-8089`):
+
+```bash
+PORT=8081 npm run dev        # or --port 8081, -p 8081, whatever the tool wants
+```
+
+Then open `http://localhost:8081` on the host. Up to 10 apps can run this
+way at once per instance, each on its own port from the block.
+
+If you need a fixed/well-known port outside the block (say Postgres on
+`5432`), forward it explicitly:
+
+```bash
+dcc port add 5432          # host 5432 -> container 5432
+dcc port add 5432 5433     # host 5433 -> container 5432, if 5432 is taken on the host
+dcc port list
+dcc port rm 5433
+```
 
 ## Security
 
