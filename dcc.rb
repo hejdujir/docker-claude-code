@@ -1,8 +1,8 @@
 class Dcc < Formula
   desc "Claude Code with full permissions inside an isolated Docker container"
   homepage "https://github.com/hejdujir/docker-claude-code"
-  url "https://github.com/hejdujir/docker-claude-code/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "ab437ac6c17f6b94b6f0c85eca94bb1921cc876e196d3846cf7128c11721742e"
+  url "https://github.com/hejdujir/docker-claude-code/archive/refs/tags/v0.1.1.tar.gz"
+  sha256 "0fb36435f9fe06b069fdc17a2e598bebc0c1e04c5fba8a1214e7ed0748cca001"
   license "Apache-2.0"
   head "https://github.com/hejdujir/docker-claude-code.git", branch: "main"
 
