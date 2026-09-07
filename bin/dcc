@@ -45,6 +45,7 @@ done
 expand_tilde() { case "$1" in "~"|"~/"*) printf '%s' "$HOME${1#\~}" ;; *) printf '%s' "$1" ;; esac; }
 abspath()      { (cd "$1" 2>/dev/null && pwd); }
 port_free()    { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+slugify()      { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\{2,\}/-/g;s/^-//;s/-$//'; }
 
 need_docker() {
     command -v docker >/dev/null 2>&1 || die "docker is not installed"
@@ -184,6 +185,17 @@ register_home() {
     grep -qxF "$HOME_DIR" "$REGISTRY" || printf '%s\n' "$HOME_DIR" >> "$REGISTRY"
 }
 
+# Is $1 already used as a PROJECT name by some other registered instance?
+project_taken() {
+    local name="$1" home
+    [ -f "$REGISTRY" ] || return 1
+    while IFS= read -r home; do
+        [ -n "$home" ] && [ -f "$home/.dcc/instance" ] || continue
+        ( PROJECT=""; . "$home/.dcc/instance"; [ "$PROJECT" = "$name" ] ) && return 0
+    done < "$REGISTRY"
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Docker operations
 # ---------------------------------------------------------------------------
@@ -293,10 +305,23 @@ cmd_create() {
     [ -s "$HOME_DIR/.dcc/mounts" ] || warn "no mounts – Claude will only see its own home"
 
     # Project name + free port block
-    local slug hash
-    slug="$(basename "$HOME_DIR" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\{2,\}/-/g;s/^-//;s/-$//')"
+    local slug hash custom
+    slug="$(slugify "$(basename "$HOME_DIR")")"
     hash="$(printf '%s' "$HOME_DIR" | cksum | cut -d' ' -f1 | tail -c 5)"
     PROJECT="dcc-${slug:-claude}-$hash"
+
+    printf '\n%s\n' "${c_b}Name shown in Docker Desktop${c_0}"
+    read -r -p "Instance name [$PROJECT]: " custom
+    if [ -n "$custom" ]; then
+        custom="$(slugify "$custom")"
+        if [ -z "$custom" ]; then
+            warn "that name has no usable characters – keeping $PROJECT"
+        elif project_taken "$custom"; then
+            warn "'$custom' is already used by another instance – keeping $PROJECT"
+        else
+            PROJECT="$custom"
+        fi
+    fi
 
     PORT_BASE=""
     local p

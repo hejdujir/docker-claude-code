@@ -104,6 +104,11 @@ You can run `dcc create` in several folders – each gets its own container,
 its own port block (8080–8089, 8090–8099, …) and its **own login**. Handy
 for separating clients, or work vs. personal accounts.
 
+`dcc create` asks for a name for the instance – that's what shows up as the
+container and Docker Compose project name in Docker Desktop, so you can
+tell instances apart at a glance. Press Enter to keep the auto-generated
+one (`dcc-<folder>-<hash>`).
+
 Port `54545` (OAuth callback) is only published to the instance that grabs
 it first; for the others you'll copy the code from the browser by hand
 during `dcc login`. `dcc doctor` will flag this.
