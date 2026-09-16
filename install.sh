@@ -18,6 +18,7 @@ curl -fsSL "https://github.com/$REPO/archive/$REF.tar.gz" | tar -xz -C "$tmp" --
 mkdir -p "$PREFIX/bin" "$SHARE"
 install -m 0755 "$tmp/bin/dcc" "$PREFIX/bin/dcc"
 rm -rf "$SHARE/image"; cp -R "$tmp/image" "$SHARE/image"
+rm -rf "$SHARE/skills"; cp -R "$tmp/skills" "$SHARE/skills"
 
 echo "installed: $PREFIX/bin/dcc"
 case ":$PATH:" in

@@ -42,6 +42,12 @@ for cand in "$BIN_DIR/../image" "$BIN_DIR/../share/dcc/image" "$BIN_DIR/../libex
 done
 [ -n "$IMAGE_DIR" ] || die "couldn't find a directory with a Dockerfile (looked next to $BIN_DIR)"
 
+# Prepackaged skills are optional – an install without them just skips that step in `create`.
+SKILLS_DIR=""
+for cand in "$BIN_DIR/../skills" "$BIN_DIR/../share/dcc/skills" "$BIN_DIR/../libexec/skills"; do
+    if [ -d "$cand" ]; then SKILLS_DIR="$(cd "$cand" && pwd)"; break; fi
+done
+
 expand_tilde() { case "$1" in "~"|"~/"*) printf '%s' "$HOME${1#\~}" ;; *) printf '%s' "$1" ;; esac; }
 abspath()      { (cd "$1" 2>/dev/null && pwd); }
 port_free()    { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
@@ -373,6 +379,32 @@ cmd_create() {
     done
 
     [ -s "$HOME_DIR/.dcc/mounts" ] || warn "no mounts – Claude will only see its own home"
+
+    # Prepackaged skills – just the `flow` skill (recon → spec → implement →
+    # review, chained). It pulls in everything it needs via its `requires:`
+    # frontmatter, so there's nothing else to ask about individually.
+    if [ -n "$SKILLS_DIR" ] && [ -f "$SKILLS_DIR/flow/SKILL.md" ]; then
+        local req_line req
+
+        req_line="$(awk '/^---$/{c++; next} c==1 && /^requires:/{sub(/^requires:[[:space:]]*/,""); print; exit}' "$SKILLS_DIR/flow/SKILL.md")"
+        req_line="$(printf '%s' "$req_line" | tr ',' ' ')"
+
+        printf '\n%s\n' "${c_b}Flow skill${c_0}"
+        printf '%s\n' "${c_dim}  recon → spec → implement → review, chained (+ grill-me for clarifying questions)${c_0}"
+        read -r -p "Install it? [y/N] " a
+        case "$a" in
+            [yY]*)
+                cp -R "$SKILLS_DIR/flow" "$HOME_DIR/skills/flow"
+                ok "  flow"
+                for req in $req_line; do
+                    [ -f "$SKILLS_DIR/$req/SKILL.md" ] || continue
+                    cp -R "$SKILLS_DIR/$req" "$HOME_DIR/skills/$req"
+                    ok "  $req"
+                done
+                ;;
+            *) ;;
+        esac
+    fi
 
     # Project name + free port block
     local slug hash custom

@@ -56,6 +56,13 @@ to create them, supports read-only) and generates `.dcc/docker-compose.yml`.
 ~/.m2                       -> /home/dev/.m2
 ```
 
+`dcc create` also offers to install a prepackaged **`flow`** skill into
+`skills/` – a `recon` → `spec` → `implement` → `review` pipeline Claude Code
+can run for a task, each step as its own subagent so the exploration and
+implementation work stays out of the main conversation's context. It comes
+with `grill-me`, a clarifying-questions helper the other steps call when
+something's genuinely unclear. See [skills/README.md](skills/README.md).
+
 **Subsequent runs:** `dcc` anywhere inside a mounted directory finds the
 right instance via the registry (`~/.config/dcc/registry`), starts the
 container if it's not running, and launches Claude Code with the matching

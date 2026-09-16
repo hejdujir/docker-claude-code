@@ -9,6 +9,7 @@ class Dcc < Formula
   def install
     bin.install "bin/dcc"
     pkgshare.install "image"
+    pkgshare.install "skills"
   end
 
   def caveats
