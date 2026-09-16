@@ -56,13 +56,6 @@ to create them, supports read-only) and generates `.dcc/docker-compose.yml`.
 ~/.m2                       -> /home/dev/.m2
 ```
 
-`dcc create` also offers to install a prepackaged **`flow`** skill into
-`skills/` – a `recon` → `spec` → `implement` → `review` pipeline Claude Code
-can run for a task, each step as its own subagent so the exploration and
-implementation work stays out of the main conversation's context. It comes
-with `grill-me`, a clarifying-questions helper the other steps call when
-something's genuinely unclear. See [skills/README.md](skills/README.md).
-
 **Subsequent runs:** `dcc` anywhere inside a mounted directory finds the
 right instance via the registry (`~/.config/dcc/registry`), starts the
 container if it's not running, and launches Claude Code with the matching
@@ -72,6 +65,35 @@ working directory. When you're in `~/dev/workspace/api`, Claude starts in
 The container is **long-running** – the first `dcc` spins it up, every
 subsequent one just hops in via `docker compose exec`. You can have several
 sessions open at once across different projects.
+
+## A dev-flow skill for Claude Code itself
+
+`dcc create` offers to install a prepackaged **`flow`** skill – give it a
+task and it works through `recon` → `spec` → `implement` → `review` instead
+of jumping straight to code:
+
+- **`recon`** explores the codebase once and caches the result to
+  `.dcc/recon.md` – refreshed only when the repo's `HEAD` has actually
+  moved since, not on every run.
+- **`spec`** turns the task into a written specification under
+  `.dcc/specs/`, grounded in that recon.
+- **`implement`** builds it against the spec, then marks the spec done
+  (`<slug>.done.md`) so a later run knows what's left.
+- **`review`** checks the diff against the spec's acceptance criteria –
+  read-only, it reports findings instead of fixing them itself.
+
+Run the whole pipeline with `/flow` inside Claude Code, or any step on its
+own (`/recon`, `/spec`, `/implement`, `/review`). `flow` runs each step as
+its **own subagent**, so that step's exploration and reasoning stay out of
+the main conversation – you only see short progress lines and the final
+summary, plus a real question on the rare occasion a step genuinely needs
+your input (relayed to you and fed back into that same subagent, not a
+restart). Those questions go through `grill-me`, a round-based
+clarifying-interview skill the other steps call when something's unclear.
+Short on time? `/flow --skip-rev` runs recon → spec → implement only.
+
+See [skills/README.md](skills/README.md) for the full catalog and how to
+add your own skills to it.
 
 ## Commands
 
