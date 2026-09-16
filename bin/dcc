@@ -5,7 +5,7 @@
 #
 set -euo pipefail
 
-DCC_VERSION="0.1.3"
+DCC_VERSION="0.1.4"
 BASE_IMAGE="${DCC_BASE_IMAGE:-dcc-base:latest}"
 REGISTRY="${XDG_CONFIG_HOME:-$HOME/.config}/dcc/registry"
 
