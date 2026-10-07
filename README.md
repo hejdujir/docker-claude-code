@@ -108,6 +108,7 @@ add your own skills to it.
 | `dcc doctor` | what's missing, what's not running, what's not logged in |
 | `dcc homes` | list of all instances and their mounts |
 | `dcc build` / `update` | (re)build the base image |
+| `dcc claude-update` | update Claude Code – rebuilds just its layer of the base image, or re-bakes the instance's snapshot |
 | `dcc snapshot [tag]` / `reset` | bake the container state / revert to base |
 | `dcc destroy` | removes the container and cache, leaves the home alone |
 

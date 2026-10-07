@@ -586,6 +586,43 @@ cmd_reset() {
     ok "instance running again from the base image"
 }
 
+cmd_claude_update() {
+    load_instance
+    ensure_up
+    local cur latest new
+    cur="$(compose exec -T --user dev claude claude --version 2>/dev/null | awk '{print $1}')"
+    latest="$(compose exec -T --user dev claude npm view @anthropic-ai/claude-code version 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$latest" ] || die "couldn't look up the latest Claude Code version (no network in the container?)"
+    if [ "$cur" = "$latest" ]; then
+        ok "Claude Code is already up to date ($cur)"
+        return 0
+    fi
+    info "Claude Code ${cur:-?} -> $latest (image $IMAGE)"
+
+    if [ "$IMAGE" = "$BASE_IMAGE" ]; then
+        # Base image is shared: rebuild only the Claude Code layer, then recreate
+        # this container so the new version survives future recreates.
+        read -r -p "Rebuild the Claude Code layer of $BASE_IMAGE and restart $PROJECT? Open sessions will be closed. [y/N] " a
+        case "$a" in [yY]*) ;; *) exit 1 ;; esac
+        build_base --build-arg CLAUDE_CACHEBUST="$(date +%s)"
+        compose up -d --force-recreate
+        ensure_up
+    else
+        # Snapshot: update in place, then re-bake the snapshot under the same tag.
+        compose exec -T --user dev claude npm install -g @anthropic-ai/claude-code@latest >/dev/null
+        read -r -p "Bake the update into snapshot $IMAGE? Without it, it's lost on the next recreate. [y/N] " a
+        case "$a" in
+            [yY]*) docker commit "$PROJECT" "$IMAGE" >/dev/null; ok "snapshot $IMAGE updated" ;;
+            *)     warn "updated only in the running container – lost on the next recreate" ;;
+        esac
+    fi
+
+    new="$(compose exec -T --user dev claude claude --version 2>/dev/null | awk '{print $1}')"
+    ok "Claude Code ${new:-?}"
+    [ "$IMAGE" = "$BASE_IMAGE" ] && printf '%s\n' "${c_dim}  Other instances on $BASE_IMAGE pick it up on their next 'dcc restart'${c_0}"
+    return 0
+}
+
 cmd_doctor() {
     need_docker; ok "docker is running"
     load_instance
@@ -661,6 +698,7 @@ ${c_b}dcc${c_0} – Claude Code in an isolated Docker container (v$DCC_VERSION)
 
   ${c_b}dcc build${c_0}            (re)build the base image
   ${c_b}dcc update${c_0}           base image from scratch + restart
+  ${c_b}dcc claude-update${c_0}    update Claude Code (rebuilds its layer or re-bakes the snapshot)
   ${c_b}dcc snapshot${c_0} [tag]   bake the current container state into an image
   ${c_b}dcc reset${c_0}            back to the clean base image
   ${c_b}dcc destroy${c_0}          remove the container and cache (home stays)
@@ -675,6 +713,7 @@ case "${1:-run}" in
     port)     shift; cmd_port "$@" ;;
     snapshot) shift; cmd_snapshot "$@" ;;
     reset)    shift; cmd_reset ;;
+    claude-update) shift; need_docker; cmd_claude_update ;;
     doctor)   shift; cmd_doctor ;;
     homes)    shift; cmd_homes ;;
     destroy)  shift; cmd_destroy ;;

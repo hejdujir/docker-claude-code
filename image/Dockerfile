@@ -55,8 +55,10 @@ RUN groupadd -g 1000 dev && \
 ENV NPM_CONFIG_PREFIX=/opt/npm-global
 ENV PATH=/opt/npm-global/bin:$PATH
 
+# Bumped by `dcc claude-update` to rebuild just this layer, not the whole image
+ARG CLAUDE_CACHEBUST=0
 RUN mkdir -p /opt/npm-global \
-  && npm install -g @anthropic-ai/claude-code \
+  && npm install -g @anthropic-ai/claude-code@latest \
   && npm cache clean --force
 
 # Without this, .claude.json (OAuth account) would end up outside the mounted home
