@@ -182,6 +182,11 @@ immediately on the host – work inside git.
   see https://github.com/anthropics/claude-code/tree/main/.devcontainer
 - The login token lives in the home directory. Over an untrusted repo it's
   theoretically exfiltratable.
+- The home's `.dcc/` is mounted read-only inside the container, and on the
+  host dcc never sources or evals anything from it: `instance`, `mounts` and
+  `ports` are parsed as plain data and validated, `docker-compose.yml` is
+  regenerated on every run, and only homes listed in the registry are used.
+  After upgrading, run `dcc restart` once so the read-only mount takes effect.
 - Docker is not a hypervisor. For hard isolation consider gVisor
   (`--runtime=runsc`) or a VM.
 

@@ -60,6 +60,104 @@ need_docker() {
 }
 
 # ---------------------------------------------------------------------------
+# Reading files under .dcc/ – never source or eval them
+# ---------------------------------------------------------------------------
+#
+# The home is mounted read-write into the container, so everything under
+# $HOME_DIR/.dcc/ has to be treated as untrusted input on the host: it is
+# parsed as data, and every value is validated before it is used in shell
+# arithmetic, docker commands or the generated compose file.
+
+valid_project()  { case "$1" in ''|[!A-Za-z0-9]*|*[!A-Za-z0-9_.-]*) return 1 ;; esac; [ "${#1}" -le 63 ]; }
+valid_image()    { case "$1" in ''|[!A-Za-z0-9]*|*[!A-Za-z0-9_.:/@-]*) return 1 ;; esac; [ "${#1}" -le 255 ]; }
+valid_port()     { case "$1" in ''|*[!0-9]*|0*) return 1 ;; esac; [ "${#1}" -le 5 ] && [ "$1" -le 65535 ]; }
+valid_port_base(){ valid_port "$1" && [ "$1" -le 65526 ]; }
+valid_flag()     { case "$1" in 0|1) return 0 ;; *) return 1 ;; esac; }
+valid_version()  { case "$1" in ''|*[!A-Za-z0-9_.+-]*) return 1 ;; esac; }
+# Paths end up inside a double-quoted YAML string and a docker volume spec:
+# they must be absolute and free of quotes, backslashes, '$' (compose
+# interpolation), ':' (volume option separator) and control characters.
+valid_path() {
+    case "$1" in /*) ;; *) return 1 ;; esac
+    case "$1" in *'"'*|*\\*|*'$'*|*:*|*'`'*|*[[:cntrl:]]*) return 1 ;; esac
+    return 0
+}
+valid_mode()     { case "$1" in rw|ro) return 0 ;; *) return 1 ;; esac; }
+
+# parse_instance <file> – reads the known KEY=value / KEY="value" lines of an
+# instance file into I_PROJECT, I_IMAGE, I_PORT_BASE, I_OAUTH_PORT and
+# I_DCC_VERSION. Fails (and sets I_ERROR) on anything else: unknown keys,
+# shell syntax, invalid values. Nothing in the file is ever executed.
+parse_instance() {
+    local file="$1" line key val n=0
+    I_PROJECT=""; I_IMAGE=""; I_PORT_BASE=""; I_OAUTH_PORT=""; I_DCC_VERSION=""; I_ERROR=""
+    [ -f "$file" ] || { I_ERROR="missing"; return 1; }
+    while IFS= read -r line || [ -n "$line" ]; do
+        n=$((n+1))
+        # trim surrounding whitespace (incl. a CR from a CRLF file)
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        case "$line" in ''|'#'*) continue ;; esac
+        case "$line" in
+            [A-Z_]*=*) key="${line%%=*}"; val="${line#*=}" ;;
+            *) I_ERROR="line $n is not KEY=value"; return 1 ;;
+        esac
+        case "$val" in
+            \"*\") val="${val#\"}"; val="${val%\"}" ;;
+            \'*\') val="${val#\'}"; val="${val%\'}" ;;
+        esac
+        case "$key" in
+            PROJECT)     valid_project "$val"   || { I_ERROR="invalid PROJECT (line $n)"; return 1; }; I_PROJECT="$val" ;;
+            IMAGE)       valid_image "$val"     || { I_ERROR="invalid IMAGE (line $n)"; return 1; }; I_IMAGE="$val" ;;
+            PORT_BASE)   valid_port_base "$val" || { I_ERROR="invalid PORT_BASE (line $n)"; return 1; }; I_PORT_BASE="$val" ;;
+            OAUTH_PORT)  [ -z "$val" ] || valid_flag "$val" || { I_ERROR="invalid OAUTH_PORT (line $n)"; return 1; }; I_OAUTH_PORT="$val" ;;
+            DCC_VERSION) [ -z "$val" ] || valid_version "$val" || { I_ERROR="invalid DCC_VERSION (line $n)"; return 1; }; I_DCC_VERSION="$val" ;;
+            *) I_ERROR="unknown key '$key' (line $n)"; return 1 ;;
+        esac
+    done < "$file"
+    [ -n "$I_PROJECT" ]   || { I_ERROR="PROJECT is missing"; return 1; }
+    [ -n "$I_IMAGE" ]     || { I_ERROR="IMAGE is missing"; return 1; }
+    [ -n "$I_PORT_BASE" ] || { I_ERROR="PORT_BASE is missing"; return 1; }
+    return 0
+}
+
+# check_mounts <file> / check_ports <file> – every non-empty line must be
+# well-formed, otherwise the whole file is rejected (never half-applied).
+check_mounts() {
+    local file="$1" host cont mode extra n=0
+    [ -f "$file" ] || return 0
+    while IFS='|' read -r host cont mode extra || [ -n "$host" ]; do
+        n=$((n+1))
+        [ -n "$host$cont$mode$extra" ] || continue
+        if [ -n "$extra" ] || ! valid_path "$host" || ! valid_path "$cont" || ! valid_mode "$mode"; then
+            I_ERROR="$file line $n is not <host-path>|<container-path>|rw|ro"; return 1
+        fi
+        case "$cont/" in
+            /home/dev/.claude/.dcc/*|/home/dev/.claude/) I_ERROR="$file line $n: container path $cont is reserved"; return 1 ;;
+        esac
+    done < "$file"
+    return 0
+}
+
+check_ports() {
+    local file="$1" hp cp extra n=0
+    [ -f "$file" ] || return 0
+    while IFS='|' read -r hp cp extra || [ -n "$hp" ]; do
+        n=$((n+1))
+        [ -n "$hp$cp$extra" ] || continue
+        if [ -n "$extra" ] || ! valid_port "$hp" || ! valid_port "$cp"; then
+            I_ERROR="$file line $n is not <host-port>|<container-port>"; return 1
+        fi
+    done < "$file"
+    return 0
+}
+
+# Is $1 a home listed in the host-side registry? The registry lives outside
+# every container, so it decides which .dcc/ directories are real instances –
+# a .dcc/instance planted inside a mounted project is not one.
+home_registered() { [ -f "$REGISTRY" ] && grep -qxF "$1" "$REGISTRY"; }
+
+# ---------------------------------------------------------------------------
 # Instance: discovery, loading
 # ---------------------------------------------------------------------------
 
@@ -69,7 +167,10 @@ HOME_DIR=""; PROJECT=""; IMAGE=""; PORT_BASE=""; OAUTH_PORT=""
 find_home_upwards() {
     local d="$PWD"
     while [ "$d" != "/" ]; do
-        [ -f "$d/.dcc/instance" ] && { printf '%s' "$d"; return 0; }
+        if [ -f "$d/.dcc/instance" ]; then
+            home_registered "$d" && { printf '%s' "$d"; return 0; }
+            warn "ignoring $d/.dcc/instance – that directory is not in $REGISTRY"
+        fi
         d="$(dirname "$d")"
     done
     return 1
@@ -99,8 +200,12 @@ load_instance() {
     [ -n "$HOME_DIR" ] || die "not inside any dcc instance.
     Run ${c_b}dcc create${c_0} in the directory that should be the home for Claude Code,
     or move into one of the mounted directories (${c_b}dcc homes${c_0})."
-    # shellcheck disable=SC1090
-    . "$HOME_DIR/.dcc/instance"
+    parse_instance "$HOME_DIR/.dcc/instance" \
+        || die "refusing to load $HOME_DIR/.dcc/instance: $I_ERROR.
+    The file is only read as KEY=\"value\" lines (PROJECT, IMAGE, PORT_BASE, OAUTH_PORT, DCC_VERSION) – fix it by hand."
+    PROJECT="$I_PROJECT"; IMAGE="$I_IMAGE"; PORT_BASE="$I_PORT_BASE"; OAUTH_PORT="$I_OAUTH_PORT"
+    check_mounts "$HOME_DIR/.dcc/mounts" || die "refusing to use mounts: $I_ERROR"
+    check_ports "$HOME_DIR/.dcc/ports"   || die "refusing to use ports: $I_ERROR"
 
     # Migrate instances created before OAUTH_PORT was tracked: infer
     # ownership from whatever the existing compose file already claims,
@@ -115,8 +220,12 @@ load_instance() {
     fi
 
     if port_base_taken "$PORT_BASE"; then
-        warn "port block $PORT_BASE-$((PORT_BASE+9)) is also claimed by another dcc instance – only one of them will actually bind. Run 'dcc homes' to see who else has it, then fix one side by hand: edit PORT_BASE in its .dcc/instance and run 'dcc mount add|rm' (or 'dcc reset') to regenerate."
+        warn "port block $PORT_BASE-$((PORT_BASE+9)) is also claimed by another dcc instance – only one of them will actually bind. Run 'dcc homes' to see who else has it, then fix one side by hand: edit PORT_BASE in its .dcc/instance and run 'dcc restart'."
     fi
+
+    # docker-compose.yml sits in the container-writable home too, so it is
+    # never trusted: rebuild it from the validated values on every run.
+    generate_compose
 }
 
 compose() { docker compose --project-directory "$HOME_DIR/.dcc" "$@"; }
@@ -169,6 +278,8 @@ generate_compose() {
         echo "      CLAUDE_CONFIG_DIR: /home/dev/.claude"
         echo "    volumes:"
         echo "      - \"$HOME_DIR:/home/dev/.claude\""
+        # .dcc/ is read by dcc on the host – keep it read-only for the container
+        echo "      - \"$HOME_DIR/.dcc:/home/dev/.claude/.dcc:ro\""
         while IFS='|' read -r host cont mode; do
             [ -n "$host" ] || continue
             if [ "$mode" = "ro" ]; then
@@ -220,7 +331,7 @@ project_taken() {
     [ -f "$REGISTRY" ] || return 1
     while IFS= read -r home; do
         [ -n "$home" ] && [ "$home" != "$HOME_DIR" ] && [ -f "$home/.dcc/instance" ] || continue
-        ( PROJECT=""; . "$home/.dcc/instance"; [ "$PROJECT" = "$name" ] ) && return 0
+        parse_instance "$home/.dcc/instance" && [ "$I_PROJECT" = "$name" ] && return 0
     done < "$REGISTRY"
     return 1
 }
@@ -234,7 +345,7 @@ port_base_taken() {
     [ -f "$REGISTRY" ] || return 1
     while IFS= read -r home; do
         [ -n "$home" ] && [ "$home" != "$HOME_DIR" ] && [ -f "$home/.dcc/instance" ] || continue
-        ( PORT_BASE=""; . "$home/.dcc/instance"; [ "$PORT_BASE" = "$target" ] ) && return 0
+        parse_instance "$home/.dcc/instance" && [ "$I_PORT_BASE" = "$target" ] && return 0
     done < "$REGISTRY"
     return 1
 }
@@ -245,7 +356,7 @@ oauth_port_taken() {
     [ -f "$REGISTRY" ] || return 1
     while IFS= read -r home; do
         [ -n "$home" ] && [ "$home" != "$HOME_DIR" ] && [ -f "$home/.dcc/instance" ] || continue
-        ( OAUTH_PORT=""; . "$home/.dcc/instance"; [ "$OAUTH_PORT" = "1" ] ) && return 0
+        parse_instance "$home/.dcc/instance" && [ "$I_OAUTH_PORT" = "1" ] && return 0
     done < "$REGISTRY"
     return 1
 }
@@ -257,11 +368,11 @@ host_port_taken() {
     [ -f "$REGISTRY" ] || return 1
     while IFS= read -r home; do
         [ -n "$home" ] && [ "$home" != "$HOME_DIR" ] && [ -f "$home/.dcc/instance" ] || continue
-        base="$( PORT_BASE=""; . "$home/.dcc/instance"; printf '%s' "$PORT_BASE" )"
+        base=""; parse_instance "$home/.dcc/instance" && base="$I_PORT_BASE"
         if [ -n "$base" ] && [ "$target" -ge "$base" ] && [ "$target" -le "$((base+9))" ]; then
             return 0
         fi
-        if [ -f "$home/.dcc/ports" ]; then
+        if [ -f "$home/.dcc/ports" ] && check_ports "$home/.dcc/ports"; then
             while IFS='|' read -r hp cp; do
                 [ -n "$hp" ] || continue
                 [ "$hp" = "$target" ] && return 0
@@ -374,6 +485,10 @@ cmd_create() {
         read -r -p "  Read-only? [y/N] " a
         case "$a" in [yY]*) mode="ro" ;; *) mode="rw" ;; esac
 
+        if ! valid_path "$host" || ! valid_path "$cont"; then
+            warn "paths must be absolute and must not contain \" \\ \$ \` or : – skipping"; continue
+        fi
+        case "$cont/" in /home/dev/.claude/.dcc/*|/home/dev/.claude/) warn "$cont is reserved – skipping"; continue ;; esac
         printf '%s|%s|%s\n' "$host" "$cont" "$mode" >> "$HOME_DIR/.dcc/mounts"
         ok "$host → $cont${c_dim}$([ "$mode" = ro ] && echo ' (ro)')${c_0}"
     done
@@ -492,6 +607,9 @@ cmd_mount() {
             host="$(abspath "$host")"
             cont="${cont:-/workspace/$(basename "$host")}"
             grep -q "^$host|" "$HOME_DIR/.dcc/mounts" && die "already added"
+            valid_mode "$mode" || die "mode must be rw or ro"
+            valid_path "$host" && valid_path "$cont" || die "paths must be absolute and must not contain \" \\ \$ \` or :"
+            case "$cont/" in /home/dev/.claude/.dcc/*|/home/dev/.claude/) die "$cont is reserved" ;; esac
             printf '%s|%s|%s\n' "$host" "$cont" "$mode" >> "$HOME_DIR/.dcc/mounts"
             generate_compose
             ok "added $host → $cont; applying…"
@@ -534,6 +652,7 @@ cmd_port() {
             [ -n "$cport" ] || die "usage: dcc port add <container-port> [host-port]"
             case "$cport" in ''|*[!0-9]*) die "container port must be numeric" ;; esac
             case "$hport" in ''|*[!0-9]*) die "host port must be numeric" ;; esac
+            valid_port "$cport" && valid_port "$hport" || die "ports must be between 1 and 65535"
             touch "$HOME_DIR/.dcc/ports"
             if grep -q "^$hport|" "$HOME_DIR/.dcc/ports"; then
                 die "host port $hport is already forwarded"
