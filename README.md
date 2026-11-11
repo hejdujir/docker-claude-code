@@ -95,6 +95,41 @@ Short on time? `/flow --skip-rev` runs recon → spec → implement only.
 See [skills/README.md](skills/README.md) for the full catalog and how to
 add your own skills to it.
 
+## What are all my sessions doing? (`dcc ps`, `dcc top`)
+
+With several instances and several sessions each, `dcc ps` gives one
+overview across all of them – which session is working, which one is
+**waiting for you**, what's done, and how far each `/flow` run got:
+
+```
+dcc · 3 instances (2 running) · 4 sessions · 1 waiting · 11:42:05
+
+INSTANCE   SESSION  STATE         AGE  UP   DIR             FLOW / LAST
+work       7c20aa00 ◆ waiting     3m   30m  /workspace/web  recon✓ spec?  question
+work       a3f1c2d4 ● working     3s   12m  /workspace/api  recon✓ spec✓ impl▶ rev·  Bash · /flow add CSV export
+osobni     e8110000 ✓ done        1m   25m  /workspace/blog recon✓ spec✓ impl✓ rev✓  /flow new post
+klient-x            ■ stopped
+```
+
+`dcc top` is the same, refreshed live (`q` quits, `a` toggles ended
+sessions, `-n 5` refreshes every 5 s). With `--notify` it also pops a
+desktop notification (macOS / `notify-send`) when a session finishes or
+starts waiting for input.
+
+It's fed by a small **session status hook**: `dcc create` offers to add it
+to the home's `settings.json` (existing homes: `dcc hooks install`, undo
+with `dcc hooks rm`). On each session event Claude Code runs
+`.dcc/hooks/status.sh` inside the container, which writes one line per
+session to `<home>/.dcc/sessions/` – the host only reads those lines as
+plain data. The `flow` skill names its subagents `flow: <step>`, which is
+how the hook knows the pipeline's progress (`✓` done, `▶` running, `?`
+waiting for your answer, `‖` stopped mid-step).
+
+A session whose terminal was killed without a proper exit can't report
+it; `dcc ps` notices there are fewer `claude` processes in the container
+than open records and hides the oldest extra ones as `gone` (`dcc ps -a`
+shows them).
+
 ## Commands
 
 | | |
@@ -107,6 +142,8 @@ add your own skills to it.
 | `dcc up\|down\|restart\|status\|logs` | container lifecycle |
 | `dcc doctor` | what's missing, what's not running, what's not logged in |
 | `dcc homes` | list of all instances and their mounts |
+| `dcc ps [-a]` / `dcc top [--notify]` | sessions of all instances and what they're doing, once or live |
+| `dcc hooks install\|rm\|status` | the session status hook that feeds `ps` / `top` |
 | `dcc build` / `update` | (re)build the base image |
 | `dcc claude-update` | update Claude Code – rebuilds just its layer of the base image, or re-bakes the instance's snapshot |
 | `dcc snapshot [tag]` / `reset` | bake the container state / revert to base |
