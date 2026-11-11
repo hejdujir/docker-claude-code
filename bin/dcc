@@ -1011,7 +1011,7 @@ fmt_age() {
 fit() {
     local s="$1" w="$2"
     if [ "${#s}" -gt "$w" ]; then
-        if [ "${3:-}" = tail ]; then s="~${s:$((${#s}-w+1))}"; else s="${s:0:$((w-1))}~"; fi
+        if [ "${3:-}" = tail ]; then s="$ELL${s:$((${#s}-w+1))}"; else s="${s:0:$((w-1))}$ELL"; fi
     fi
     [ "${3:-}" = cut ] && { printf '%s' "$s"; return; }
     printf '%s%*s' "$s" $((w-${#s})) ''
@@ -1021,9 +1021,9 @@ fit() {
 # locale – pick one if the user's isn't (macOS GUI apps often have none).
 use_utf8_locale() {
     local loc
-    case "$(locale charmap 2>/dev/null)" in UTF-8|utf8) return 0 ;; esac
+    case "$(locale charmap 2>/dev/null)" in UTF-8|utf8) ELL="…"; return 0 ;; esac
     loc="$(locale -a 2>/dev/null | grep -i -m1 -E '^(C|en_US)\.utf-?8$' || true)"
-    [ -n "$loc" ] && export LC_ALL="$loc"
+    [ -n "$loc" ] && { export LC_ALL="$loc"; ELL="…"; }
     return 0
 }
 
@@ -1081,7 +1081,7 @@ notify_host() {
 render_overview() {
     local all="${1:-0}" footer="${2:-}" now cols home name up live list rec f k
     local v sid cwd state started updated tool detail flow prio last
-    local rows="" n_inst=0 n_up=0 n_sess=0 n_wait=0 shown w_inst=8 w_dir=26 w_last
+    local rows="" n_inst=0 n_up=0 n_sess=0 n_wait=0 shown w_inst=8 w_dir=3 w_last
     now="$(date +%s)"
     cols="$(tput cols 2>/dev/null || echo 120)"; [ -t 1 ] || [ -n "$EOL" ] || cols=200
     up=" $(docker ps --format '{{.Names}}' 2>/dev/null | tr '\n' ' ') "
@@ -1126,6 +1126,9 @@ render_overview() {
                     waiting) prio=1 ;; working) prio=2 ;; done) prio=3 ;; idle) prio=4 ;;
                     stale) prio=6 ;; *) state=ended; prio=7 ;;
                 esac
+                # almost every project lives under /workspace – leave that off
+                case "$cwd" in /workspace/?*) cwd="${cwd#/workspace/}" ;; esac
+                cwd="${cwd//[[:cntrl:]]/}"
                 case "$PREV_SNAP" in
                     *"|$sid:working|"*)
                         case "$state" in
@@ -1137,6 +1140,7 @@ render_overview() {
                 [ "$prio" -le 4 ] && { n_sess=$((n_sess+1)); [ "$state" = waiting ] && n_wait=$((n_wait+1)); }
                 [ "$prio" -ge 6 ] && [ "$all" != 1 ] && continue
                 shown=$((shown+1))
+                [ "${#cwd}" -gt "$w_dir" ] && w_dir="${#cwd}"
                 rows="$rows"$'\n'"$prio$US$updated$US$name$US$sid$US$state$US$started$US$cwd$US$tool$US$detail$US$flow"
             done <<EOF2
 $(printf '%s' "$list" | sort -t "$US" -k1,1nr)
@@ -1149,9 +1153,14 @@ EOF2
     printf '%s\n%s\n' "${c_dim} · $(date +%H:%M:%S)${c_0}$EOL" "$EOL"
     [ "$n_inst" -gt 0 ] || { printf '%s\n' "no instances – 'dcc create'$EOL"; return 0; }
 
-    [ "$w_inst" -gt 24 ] && w_inst=24
-    [ "$cols" -lt 120 ] && w_dir=18
-    w_last=$((cols - w_inst - 9 - 14 - 5 - 5 - w_dir - 2 - 6))
+    # fixed columns take 35 characters incl. separators; INSTANCE and DIR
+    # get what they need up to a cap, the rest goes to FLOW / LAST
+    if [ "$cols" -lt 120 ]; then
+        [ "$w_inst" -gt 18 ] && w_inst=18; [ "$w_dir" -gt 20 ] && w_dir=20
+    else
+        [ "$w_inst" -gt 24 ] && w_inst=24; [ "$w_dir" -gt 32 ] && w_dir=32
+    fi
+    w_last=$((cols - w_inst - w_dir - 36))
     printf '%s%s %s %s %s %s %s %s%s\n' "$c_dim" "$(fit INSTANCE "$w_inst")" "$(fit SESSION 8)" \
         "$(fit STATE 13)" "$(fit AGE 4)" "$(fit UP 4)" "$(fit DIR "$w_dir")" "FLOW / LAST" "$c_0$EOL"
     while IFS="$US" read -r prio updated name sid state started cwd tool detail flow; do
@@ -1181,7 +1190,7 @@ EOF2
     return 0
 }
 
-EOL=""; PREV_SNAP=""; SNAP=""; NOTIFY_MSGS=""; DCC_TOP_TMP=""
+EOL=""; PREV_SNAP=""; SNAP=""; NOTIFY_MSGS=""; DCC_TOP_TMP=""; ELL="~"
 
 cmd_ps() {
     local all=0
