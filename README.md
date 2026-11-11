@@ -102,14 +102,34 @@ overview across all of them – which session is working, which one is
 **waiting for you**, what's done, and how far each `/flow` run got:
 
 ```
-dcc · 3 instances (2 running) · 4 sessions · 1 waiting · 11:42:05
+dcc · 3 instances (2 running) · 4 sessions · 1 waiting · 1 agent running · 11:42:05
 
-INSTANCE   SESSION  STATE         AGE  UP   DIR             FLOW / LAST
-work       7c20aa00 ◆ waiting     3m   30m  /workspace/web  recon✓ spec?  question
-work       a3f1c2d4 ● working     3s   12m  /workspace/api  recon✓ spec✓ impl▶ rev·  Bash · /flow add CSV export
-osobni     e8110000 ✓ done        1m   25m  /workspace/blog recon✓ spec✓ impl✓ rev✓  /flow new post
+INSTANCE   SESSION  STATE         AGE  UP   AGENTS DIR            FLOW / LAST
+work       7c20aa00 ◆ waiting     3m   30m  0/2    web            recon✓ spec?  question
+work       86f761ce ● working     1s   21m  1/3    ptl-app-quadro recon✓ spec✓ impl▶ rev· 270k  Agent · /flow add CSV export
+osobni     e8110000 ✓ done        1m   25m  0/4    blog           recon✓ spec✓ impl✓ rev✓ 655k  /flow new post
 klient-x            ■ stopped
 ```
+
+`AGENTS` is running/total subagents of the session, the number after the
+flow steps is how many tokens its subagents have used so far. `dcc ps
+<session-id>` (any unique prefix) breaks a flow down step by step:
+
+```
+86f761ce · work · ptl-app-quadro · ● working · 21m up · /flow add CSV export
+agents 1 running / 3 total
+
+  STEP        MODEL              STATE  TIME     TOKENS   OUTPUT
+  recon       opus-5-5           ✓      2m09s    110k     15k
+  spec        opus-5-5           ✓      1m28s    70k      8.8k
+  implement   opus-5-5           ▶      4m10s…   89k      13k
+  review      –                  ·      –        –        –
+  total                                 7m47s    270k     37k
+```
+
+TOKENS counts input, output and cache writes of each step's subagent
+(cache reads – the same context read again on every turn – are left out),
+taken from the subagents' own transcripts in the home.
 
 `dcc top` is the same, refreshed live (`q` quits, `a` toggles ended
 sessions, `-n 5` refreshes every 5 s). With `--notify` it also pops a
@@ -132,7 +152,7 @@ It's fed by a small **session status hook**: `dcc create` offers to add it
 to the home's `settings.json` (existing homes: `dcc hooks install`, undo
 with `dcc hooks rm`). On each session event Claude Code runs
 `.dcc/hooks/status.sh` inside the container, which writes one line per
-session to `<home>/.dcc-status/` – the host only reads those lines as
+session (plus the flow's token counts) to `<home>/.dcc-status/` – the host only reads those lines as
 plain data. The `flow` skill names its subagents `flow: <step>`, which is
 how the hook knows the pipeline's progress (`✓` done, `▶` running, `?`
 waiting for your answer, `‖` stopped mid-step).
@@ -155,6 +175,7 @@ shows them).
 | `dcc doctor` | what's missing, what's not running, what's not logged in |
 | `dcc homes` | list of all instances and their mounts |
 | `dcc ps [-a]` / `dcc top [--notify]` | sessions of all instances and what they're doing, once or live |
+| `dcc ps <session-id>` | one session's flow step by step: model, time, tokens |
 | `dcc new [--tab]` | pick an instance and a mounted folder, start a session there |
 | `dcc hooks install\|rm\|status` | the session status hook that feeds `ps` / `top` |
 | `dcc build` / `update` | (re)build the base image |
