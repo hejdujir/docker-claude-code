@@ -36,6 +36,7 @@ resolve_self() {
 }
 
 BIN_DIR="$(resolve_self)"
+DCC_SELF="$BIN_DIR/$(basename "${BASH_SOURCE[0]}")"
 IMAGE_DIR=""
 for cand in "$BIN_DIR/../image" "$BIN_DIR/../share/dcc/image" "$BIN_DIR/../libexec/image"; do
     if [ -f "$cand/Dockerfile" ]; then IMAGE_DIR="$(cd "$cand" && pwd)"; break; fi
@@ -196,7 +197,14 @@ find_home_via_mounts() {
 }
 
 load_instance() {
-    HOME_DIR="$(find_home_upwards || find_home_via_mounts || true)"
+    # DCC_HOME picks the instance explicitly (dcc new / dcc top use it when
+    # one folder is mounted into several instances)
+    if [ -n "${DCC_HOME:-}" ]; then
+        home_registered "$DCC_HOME" || die "DCC_HOME=$DCC_HOME is not a registered instance ($REGISTRY)"
+        HOME_DIR="$DCC_HOME"
+    else
+        HOME_DIR="$(find_home_upwards || find_home_via_mounts || true)"
+    fi
     [ -n "$HOME_DIR" ] || die "not inside any dcc instance.
     Run ${c_b}dcc create${c_0} in the directory that should be the home for Claude Code,
     or move into one of the mounted directories (${c_b}dcc homes${c_0})."
@@ -579,6 +587,7 @@ statsig/
 backups/
 file-history/
 ide/
+.dcc-status/
 EOF
 
     printf '\n'
@@ -819,8 +828,9 @@ HOOK_CMD="bash /home/dev/.claude/$HOOK_REL"
 US=$'\x1f'
 
 # The hook itself. It runs inside the container on every session event and
-# writes one line per session to <home>/.dcc/sessions/<id> – the host only
-# ever reads those lines as plain data, never sources or executes them.
+# writes one line per session to <home>/.dcc-status/<id> (not under .dcc/,
+# which the container only gets read-only) – the host only ever reads those
+# lines as plain data, never sources or executes them.
 hook_script() {
     cat <<'HOOK'
 #!/usr/bin/env bash
@@ -829,7 +839,7 @@ hook_script() {
 # session's state for 'dcc ps' / 'dcc top' on the host. It must never fail
 # loudly or print anything, so every error just ends it quietly.
 exec 2>/dev/null
-dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.dcc/sessions"
+dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.dcc-status"
 mkdir -p "$dir" || exit 0
 US=$'\x1f'
 
@@ -920,10 +930,12 @@ HOOK
 hooks_installed() { grep -qF "$HOOK_REL" "$1/settings.json" 2>/dev/null; }
 
 write_hook_script() {
-    mkdir -p "$HOME_DIR/.dcc/hooks" "$HOME_DIR/.dcc/sessions"
+    mkdir -p "$HOME_DIR/.dcc/hooks" "$HOME_DIR/.dcc-status"
     hook_script > "$HOME_DIR/$HOOK_REL.tmp" && mv "$HOME_DIR/$HOOK_REL.tmp" "$HOME_DIR/$HOOK_REL"
-    grep -qxF 'sessions/' "$HOME_DIR/.dcc/.gitignore" 2>/dev/null \
-        || printf '%s\n' 'sessions/' >> "$HOME_DIR/.dcc/.gitignore"
+    rm -rf "${HOME_DIR:?}/.dcc/sessions"    # where dcc 0.1.5's first take kept them
+    [ -f "$HOME_DIR/.gitignore" ] && ! grep -qxF '.dcc-status/' "$HOME_DIR/.gitignore" \
+        && printf '%s\n' '.dcc-status/' >> "$HOME_DIR/.gitignore"
+    return 0
 }
 
 # Keep an already installed hook script in step with this dcc version
@@ -974,7 +986,7 @@ cmd_hooks() {
         rm|remove|off)
             hooks_installed "$HOME_DIR" || { ok "session status hooks aren't installed"; return 0; }
             edit_settings "$JQ_HOOKS_RM"
-            rm -rf "$HOME_DIR/.dcc/hooks" "$HOME_DIR/.dcc/sessions"
+            rm -rf "${HOME_DIR:?}/.dcc/hooks" "${HOME_DIR:?}/.dcc-status"
             ok "session status hooks removed (previous settings.json kept as settings.json.dcc-bak)"
             ;;
         status)
@@ -1093,7 +1105,7 @@ render_overview() {
                 case "$live" in ''|*[!0-9]*) live="-" ;; esac
             fi
             list=""
-            for f in "$home"/.dcc/sessions/*; do
+            for f in "$home"/.dcc-status/*; do
                 [ -f "$f" ] || continue
                 IFS="$US" read -r v sid cwd state started updated tool detail flow < "$f" || [ -n "$sid" ] || continue
                 [ "$v" = 1 ] || continue
@@ -1178,6 +1190,123 @@ cmd_ps() {
     render_overview "$all"
 }
 
+# ---------------------------------------------------------------------------
+# dcc new: pick an instance and one of its mounted folders, start a session
+# ---------------------------------------------------------------------------
+
+# Shell single-quoting / AppleScript string literal for arbitrary text
+sq()     { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+as_str() { local t="${1//\\/\\\\}"; printf '"%s"' "${t//\"/\\\"}"; }
+
+# pick <title> <item>... → PICK (1-based); fails when cancelled. fzf when
+# it's installed, a numbered menu otherwise (DCC_PICKER=menu forces that).
+pick() {
+    local title="$1" n i ans line it
+    shift; n=$#; PICK=""
+    [ "$n" -gt 0 ] || return 1
+    if [ "${DCC_PICKER:-}" != menu ] && command -v fzf >/dev/null 2>&1 && [ -t 0 ]; then
+        line="$(i=0; for it in "$@"; do i=$((i+1)); printf '%d\t%s\n' "$i" "$it"; done \
+            | fzf --prompt="$title > " --delimiter="$(printf '\t')" --with-nth=2.. \
+                  --height=60% --reverse --no-multi)" || return 1
+        PICK="${line%%"$(printf '\t')"*}"
+        return 0
+    fi
+    printf '\n%s\n' "$c_b$title$c_0" >&2
+    i=0
+    for it in "$@"; do i=$((i+1)); printf '  %2d) %s\n' "$i" "$it" >&2; done
+    read -r -p "Number (Enter = cancel): " ans || return 1
+    case "$ans" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$ans" -ge 1 ] && [ "$ans" -le "$n" ] || return 1
+    PICK="$ans"
+}
+
+# Interactive choice → T_HOME (instance home) and T_DIR (host folder)
+choose_target() {
+    local home up st host cont mode sub
+    local homes=() labels=() dirs=() dlabels=()
+    T_HOME=""; T_DIR=""
+    [ -f "$REGISTRY" ] || { warn "no instance yet – 'dcc create'"; return 1; }
+    up=" $(docker ps --format '{{.Names}}' 2>/dev/null | tr '\n' ' ') "
+    while IFS= read -r home; do
+        [ -n "$home" ] && parse_instance "$home/.dcc/instance" || continue
+        case "$up" in *" $I_PROJECT "*) st="running" ;; *) st="stopped" ;; esac
+        homes+=("$home"); labels+=("$(fit "$I_PROJECT" 24) $(fit "$st" 8) $home")
+    done < "$REGISTRY"
+    [ "${#homes[@]}" -gt 0 ] || { warn "no usable instance in $REGISTRY"; return 1; }
+    if [ "${#homes[@]}" -eq 1 ]; then
+        T_HOME="${homes[0]}"
+    else
+        pick "Instance" "${labels[@]}" || return 1
+        T_HOME="${homes[$((PICK-1))]}"
+    fi
+
+    check_mounts "$T_HOME/.dcc/mounts" || { warn "refusing to use mounts: $I_ERROR"; return 1; }
+    while IFS='|' read -r host cont mode; do
+        [ -n "$host" ] && [ -d "$host" ] || continue
+        case "$cont/" in /home/dev/*) continue ;; esac     # caches like ~/.m2, not projects
+        dirs+=("$host"); dlabels+=("$cont$( [ "$mode" = ro ] && echo ' (ro)')")
+        for sub in "$host"/*/; do
+            [ -d "$sub" ] || continue
+            sub="${sub%/}"
+            case "$sub" in *[[:cntrl:]]*) continue ;; esac
+            dirs+=("$sub"); dlabels+=("$cont/${sub##*/}")
+        done
+    done < "$T_HOME/.dcc/mounts"
+    [ "${#dirs[@]}" -gt 0 ] || { warn "$T_HOME has no project folders mounted – 'dcc mount add'"; return 1; }
+    pick "Folder" "${dlabels[@]}" || return 1
+    T_DIR="${dirs[$((PICK-1))]}"
+}
+
+# Open "dcc" for T_HOME in T_DIR in a new tab/window of the terminal dcc
+# itself runs in. Fails when that terminal isn't one it knows how to drive.
+open_in_new_tab() {
+    local cmd shell="${SHELL:-/bin/bash}"
+    cmd="cd $(sq "$T_DIR") && DCC_HOME=$(sq "$T_HOME") $(sq "$DCC_SELF")"
+    if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+        tmux new-window -c "$T_DIR" "$cmd" && return 0
+    fi
+    case "${TERM_PROGRAM:-}" in
+        iTerm.app)
+            osascript >/dev/null 2>&1 <<OSA && return 0
+tell application "iTerm2"
+    tell current window
+        create tab with default profile
+        tell current session to write text $(as_str "$cmd")
+    end tell
+end tell
+OSA
+            ;;
+        Apple_Terminal)
+            osascript -e "tell application \"Terminal\" to do script $(as_str "$cmd")" >/dev/null 2>&1 && return 0 ;;
+        WezTerm)
+            wezterm cli spawn --cwd "$T_DIR" -- "$shell" -lc "$cmd" >/dev/null 2>&1 && return 0 ;;
+        ghostty)
+            if [ "$(uname)" = Darwin ]; then
+                open -na Ghostty.app --args --working-directory="$T_DIR" -e "$shell" -lc "$cmd" >/dev/null 2>&1 && return 0
+            else
+                ( ghostty --working-directory="$T_DIR" -e "$shell" -lc "$cmd" >/dev/null 2>&1 & ) && return 0
+            fi ;;
+    esac
+    if [ -n "${KITTY_WINDOW_ID:-}" ] && command -v kitty >/dev/null 2>&1; then
+        kitty @ launch --type=tab --cwd "$T_DIR" "$shell" -lc "$cmd" >/dev/null 2>&1 && return 0
+    fi
+    return 1
+}
+
+run_here() { ( cd "$T_DIR" && DCC_HOME="$T_HOME" "$DCC_SELF" ); }
+
+cmd_new() {
+    local tab=0
+    case "${1:-}" in -t|--tab) tab=1 ;; "") ;; *) die "usage: dcc new [--tab]" ;; esac
+    use_utf8_locale
+    choose_target || { info "cancelled"; return 0; }
+    if [ "$tab" = 1 ]; then
+        open_in_new_tab && { ok "session opened in a new tab: $T_DIR"; return 0; }
+        warn "can't open a tab in this terminal (${TERM_PROGRAM:-unknown}) – starting here"
+    fi
+    run_here
+}
+
 cmd_top() {
     local all=0 interval=2 notify=0 key line
     while [ $# -gt 0 ]; do
@@ -1199,7 +1328,7 @@ cmd_top() {
     trap 'exit 0' INT TERM
     while :; do
         NOTIFY_MSGS=""
-        render_overview "$all" "q quit · a $( [ "$all" = 1 ] && echo hide || echo show ) ended · every ${interval}s$( [ "$notify" = 1 ] && echo ' · notifications on' )" > "$DCC_TOP_TMP"
+        render_overview "$all" "q quit · n new session · a $( [ "$all" = 1 ] && echo hide || echo show ) ended · every ${interval}s$( [ "$notify" = 1 ] && echo ' · notifications on' )" > "$DCC_TOP_TMP"
         tput cup 0 0 2>/dev/null || true
         cat "$DCC_TOP_TMP"
         tput ed 2>/dev/null || true
@@ -1210,7 +1339,18 @@ EOF2
         fi
         PREV_SNAP="$SNAP"
         if read -rsn1 -t "$interval" key; then
-            case "$key" in q|Q) break ;; a|A) all=$((1-all)) ;; esac
+            case "$key" in
+                q|Q) break ;;
+                a|A) all=$((1-all)) ;;
+                n|N) tput cnorm 2>/dev/null || true; tput clear 2>/dev/null || true
+                     if choose_target && ! open_in_new_tab; then
+                         # unknown terminal: run it right here, back to top afterwards
+                         tput rmcup 2>/dev/null || true
+                         run_here || true
+                         tput smcup 2>/dev/null || true
+                     fi
+                     tput civis 2>/dev/null || true; tput clear 2>/dev/null || true ;;
+            esac
         fi
     done
 }
@@ -1232,7 +1372,8 @@ ${c_b}dcc${c_0} – Claude Code in an isolated Docker container (v$DCC_VERSION)
   ${c_b}dcc doctor${c_0}           diagnose the instance
   ${c_b}dcc homes${c_0}            list all instances
   ${c_b}dcc ps${c_0} [-a]          sessions of all instances and what they're doing
-  ${c_b}dcc top${c_0} [--notify]   the same, refreshed live (q quits)
+  ${c_b}dcc top${c_0} [--notify]   the same, refreshed live (q quits, n new session)
+  ${c_b}dcc new${c_0} [--tab]         pick an instance and folder, start a session there
   ${c_b}dcc hooks${c_0} install|rm|status   session status hooks for ps/top
 
   ${c_b}dcc build${c_0}            (re)build the base image
@@ -1258,6 +1399,7 @@ case "${1:-run}" in
     hooks)    shift; cmd_hooks "$@" ;;
     ps)       shift; cmd_ps "$@" ;;
     top)      shift; cmd_top "$@" ;;
+    new)      shift; cmd_new "$@" ;;
     destroy)  shift; cmd_destroy ;;
 
     build)    shift; need_docker; build_base "$@" ;;

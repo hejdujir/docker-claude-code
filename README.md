@@ -116,11 +116,23 @@ sessions, `-n 5` refreshes every 5 s). With `--notify` it also pops a
 desktop notification (macOS / `notify-send`) when a session finishes or
 starts waiting for input.
 
+Press `n` in `dcc top` (or run `dcc new`) to **start a new session**: pick
+the instance (skipped when there's only one), then one of its mounted
+folders or a project directly inside one – cache mounts under `/home/dev`
+like `~/.m2` aren't offered. Uses `fzf` when it's installed, a numbered
+menu otherwise. From `dcc top` (and `dcc new --tab`) the session opens in a
+new tab/window of the terminal you're in – iTerm2, Terminal.app, tmux,
+WezTerm, kitty (with remote control enabled) or Ghostty; in any other
+terminal it runs right there and you're back in `top` when it ends. The
+first time, macOS asks whether your terminal may control itself
+(Automation permission) – allow it. `DCC_HOME=<home> dcc` does the same
+by hand when a folder is mounted into more than one instance.
+
 It's fed by a small **session status hook**: `dcc create` offers to add it
 to the home's `settings.json` (existing homes: `dcc hooks install`, undo
 with `dcc hooks rm`). On each session event Claude Code runs
 `.dcc/hooks/status.sh` inside the container, which writes one line per
-session to `<home>/.dcc/sessions/` – the host only reads those lines as
+session to `<home>/.dcc-status/` – the host only reads those lines as
 plain data. The `flow` skill names its subagents `flow: <step>`, which is
 how the hook knows the pipeline's progress (`✓` done, `▶` running, `?`
 waiting for your answer, `‖` stopped mid-step).
@@ -143,6 +155,7 @@ shows them).
 | `dcc doctor` | what's missing, what's not running, what's not logged in |
 | `dcc homes` | list of all instances and their mounts |
 | `dcc ps [-a]` / `dcc top [--notify]` | sessions of all instances and what they're doing, once or live |
+| `dcc new [--tab]` | pick an instance and a mounted folder, start a session there |
 | `dcc hooks install\|rm\|status` | the session status hook that feeds `ps` / `top` |
 | `dcc build` / `update` | (re)build the base image |
 | `dcc claude-update` | update Claude Code – rebuilds just its layer of the base image, or re-bakes the instance's snapshot |
