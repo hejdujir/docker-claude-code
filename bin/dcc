@@ -437,7 +437,13 @@ enter() {
     local wd="$1"; shift
     ensure_up
     refresh_hook_script
-    compose exec --user dev -e HOME=/home/dev -w "$wd" claude "$@"
+    # Classic renderer by default: newer Claude Code draws in the terminal's
+    # alternate screen, where the terminal keeps no scrollback, so the
+    # conversation can't be scrolled back in iTerm & co. DCC_FULLSCREEN=1
+    # keeps Claude Code's own choice (fullscreen, scrolled inside Claude).
+    local render=(-e CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1)
+    [ "${DCC_FULLSCREEN:-}" = 1 ] && render=()
+    compose exec --user dev -e HOME=/home/dev ${render[@]+"${render[@]}"} -w "$wd" claude "$@"
 }
 
 # ---------------------------------------------------------------------------

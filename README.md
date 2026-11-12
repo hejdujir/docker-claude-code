@@ -183,6 +183,11 @@ shows them).
 | `dcc snapshot [tag]` / `reset` | bake the container state / revert to base |
 | `dcc destroy` | removes the container and cache, leaves the home alone |
 
+Claude Code runs with its classic renderer, so the conversation stays in
+your terminal's scrollback. Newer versions otherwise draw fullscreen in the
+alternate screen, where the terminal keeps no history and you scroll inside
+Claude instead – `DCC_FULLSCREEN=1 dcc` keeps that.
+
 ## The base image is deliberately dumb
 
 Node 22, git, gh, build-essential, python3, ripgrep, fd, jq, tmux, vim,
