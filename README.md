@@ -33,6 +33,19 @@ curl -fsSL https://raw.githubusercontent.com/hejdujir/docker-claude-code/main/in
 
 You need a running Docker (Docker Desktop, Colima, OrbStack).
 
+### Tab completion
+
+Homebrew installs it for zsh and bash on its own (zsh needs Homebrew's
+`site-functions` in `fpath` and `compinit`, which the usual Homebrew zsh setup
+already does). Without Homebrew, add this to `~/.zshrc`:
+
+```bash
+eval "$(dcc completion zsh)"
+```
+
+or to `~/.bashrc`: `eval "$(dcc completion bash)"`. Then `dcc <Tab>` lists the
+commands with a short description, `dcc mount <Tab>` its subcommands, and so on.
+
 ## How it works
 
 **`dcc create`** turns the current folder into a *home* for Claude Code – in
@@ -199,6 +212,7 @@ by an older dcc aren't covered – end them by hand or restart the container.
 | `dcc ps <session-id>` | one session's flow step by step: model, time, tokens |
 | `dcc new [--tab]` | pick an instance and a mounted folder, start a session there |
 | `dcc hooks install\|rm\|status` | the session status hook that feeds `ps` / `top` |
+| `dcc completion zsh\|bash` | print the Tab-completion script for your shell |
 | `dcc build` / `update` | (re)build the base image |
 | `dcc claude-update` | update Claude Code – rebuilds just its layer of the base image, or re-bakes the instance's snapshot |
 | `dcc snapshot [tag]` / `reset` | bake the container state / revert to base |

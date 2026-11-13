@@ -31,6 +31,156 @@ warn() { printf '%s\n' "${c_y}dcc:${c_0} $*" >&2; }
 die()  { printf '%s\n' "${c_r}dcc:${c_0} $*" >&2; exit 1; }
 ok()   { printf '%s\n' "${c_g}✓${c_0} $*" >&2; }
 
+# ---------------------------------------------------------------------------
+# Shell completion – `dcc completion zsh|bash` prints the script.
+# Handled before anything else so it works without an image dir or Docker.
+# ---------------------------------------------------------------------------
+
+completion_zsh() {
+    cat <<'EOF'
+#compdef dcc
+# zsh completion for dcc – load with: eval "$(dcc completion zsh)"
+
+_dcc() {
+    local -a cmds
+    cmds=(
+        'create:first-time setup – make this directory a home for Claude Code'
+        'login:log in to your account'
+        'shell:bash inside the container'
+        'exec:run a one-off command (dcc exec -- <cmd>)'
+        'mount:manage mounted directories (list|add|rm)'
+        'port:forward an extra host<->container port (list|add|rm)'
+        'up:start the container'
+        'down:stop the container'
+        'restart:restart the container'
+        'status:container status'
+        'logs:container logs'
+        'doctor:diagnose the instance'
+        'homes:list all instances'
+        'ps:sessions of all instances and what they are doing'
+        'top:the same, refreshed live'
+        'new:pick an instance and folder, start a session there'
+        'hooks:session status hooks for ps/top (install|rm|status)'
+        'build:(re)build the base image'
+        'update:base image from scratch + restart'
+        'claude-update:update Claude Code'
+        'snapshot:bake the current container state into an image'
+        'reset:back to the clean base image'
+        'destroy:remove the container and cache (home stays)'
+        'completion:print the shell completion script (zsh|bash)'
+        'help:show help'
+    )
+
+    if (( CURRENT == 2 )); then
+        case $PREFIX in
+            */*|.*|\~*) _path_files -/ ;;          # dcc <folder> – quick jump
+            -*) _describe -t options 'option' '(--help:show\ help --version:show\ version)' ;;
+            *)  _describe -t commands 'dcc command' cmds ;;
+        esac
+        return
+    fi
+
+    case $words[2] in
+        create) (( CURRENT == 3 )) && _path_files -/ ;;
+        mount)
+            if (( CURRENT == 3 )); then
+                local -a subs=('list:list mounts' 'add:add a directory' 'rm:remove a directory')
+                _describe -t subcommands 'mount subcommand' subs
+            else
+                case $words[3] in
+                    add) case $CURRENT in
+                             4) _path_files -/ ;;
+                             5) _message 'container path (optional)' ;;
+                             6) _values 'mode' rw ro ;;
+                         esac ;;
+                    rm|remove) (( CURRENT == 4 )) && _path_files -/ ;;
+                esac
+            fi ;;
+        port)
+            if (( CURRENT == 3 )); then
+                local -a subs=('list:list forwarded ports' 'add:forward a port' 'rm:stop forwarding a port')
+                _describe -t subcommands 'port subcommand' subs
+            else
+                case $words[3] in
+                    add) case $CURRENT in 4) _message 'container port' ;; 5) _message 'host port (optional)' ;; esac ;;
+                    rm|remove) _message 'host port' ;;
+                esac
+            fi ;;
+        hooks)
+            if (( CURRENT == 3 )); then
+                local -a subs=('install:install the status hooks' 'rm:remove them' 'status:are they installed?')
+                _describe -t subcommands 'hooks subcommand' subs
+            fi ;;
+        ps|top|new) shift words; (( CURRENT-- )) ;|   # _arguments: drop "dcc" so the subcommand is words[1]
+        ps)  _arguments '(-a --all)'{-a,--all}'[include ended sessions]' '1::session id:' ;;
+        top) _arguments '(-a --all)'{-a,--all}'[include ended sessions]' \
+                        '-n[refresh interval]:seconds:' '--notify[desktop notifications]' ;;
+        new) _arguments '(-t --tab)'{-t,--tab}'[open in a new terminal tab]' ;;
+        snapshot) (( CURRENT == 3 )) && _message 'tag (optional)' ;;
+        exec) (( CURRENT == 3 )) && compadd -- -- ;;
+        completion) (( CURRENT == 3 )) && _values 'shell' zsh bash ;;
+    esac
+}
+
+if [ "$funcstack[1]" = "_dcc" ]; then
+    _dcc "$@"
+else
+    compdef _dcc dcc
+fi
+EOF
+}
+
+completion_bash() {
+    cat <<'EOF'
+# bash completion for dcc – load with: eval "$(dcc completion bash)"
+_dcc() {
+    local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}"
+    local cmd="${COMP_WORDS[1]:-}" sub="${COMP_WORDS[2]:-}" w=""
+    local cmds="create login shell exec mount port up down restart status logs doctor homes ps top new hooks build update claude-update snapshot reset destroy completion help"
+    COMPREPLY=()
+
+    if [ "$COMP_CWORD" -eq 1 ]; then
+        case "$cur" in
+            */*|.*|~*) COMPREPLY=($(compgen -d -- "$cur")) ;;
+            -*) COMPREPLY=($(compgen -W "--help --version" -- "$cur")) ;;
+            *)  COMPREPLY=($(compgen -W "$cmds" -- "$cur")) ;;
+        esac
+        return 0
+    fi
+
+    case "$cmd" in
+        create) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -d -- "$cur")) ;;
+        mount|port|hooks)
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                case "$cmd" in hooks) w="install rm status" ;; *) w="list add rm" ;; esac
+            elif [ "$cmd" = mount ]; then
+                case "$sub:$COMP_CWORD" in
+                    add:3|rm:3|remove:3) COMPREPLY=($(compgen -d -- "$cur")); return 0 ;;
+                    add:5) w="rw ro" ;;
+                esac
+            fi ;;
+        ps)  w="-a --all" ;;
+        top) [ "$prev" = "-n" ] && return 0; w="-a --all -n --notify" ;;
+        new) w="-t --tab" ;;
+        exec) [ "$COMP_CWORD" -eq 2 ] && w="--" ;;
+        completion) [ "$COMP_CWORD" -eq 2 ] && w="zsh bash" ;;
+    esac
+    [ -n "$w" ] && COMPREPLY=($(compgen -W "$w" -- "$cur"))
+    return 0
+}
+complete -o filenames -F _dcc dcc
+EOF
+}
+
+if [ "${1:-}" = completion ]; then
+    case "${2:-}" in
+        zsh)  completion_zsh ;;
+        bash) completion_bash ;;
+        *)    die "usage: dcc completion zsh|bash" ;;
+    esac
+    exit 0
+fi
+
 # Own path even through symlinks (brew links bin/dcc)
 resolve_self() {
     local p="${BASH_SOURCE[0]}" d
@@ -1730,6 +1880,8 @@ ${c_b}dcc${c_0} – Claude Code in an isolated Docker container (v$DCC_VERSION)
   ${c_b}dcc top${c_0} [--notify]   the same, refreshed live (q quits, n new session)
   ${c_b}dcc new${c_0} [--tab]         pick an instance and folder, start a session there
   ${c_b}dcc hooks${c_0} install|rm|status   session status hooks for ps/top
+  ${c_b}dcc completion${c_0} zsh|bash   Tab completion – add to ~/.zshrc:
+                       eval "\$(dcc completion zsh)"
 
   ${c_b}dcc build${c_0}            (re)build the base image
   ${c_b}dcc update${c_0}           base image from scratch + restart

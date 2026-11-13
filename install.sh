@@ -25,4 +25,6 @@ case ":$PATH:" in
   *":$PREFIX/bin:"*) ;;
   *) echo "  Add to PATH:  export PATH=\"$PREFIX/bin:\$PATH\"" ;;
 esac
+echo "  Tab completion – add to ~/.zshrc (or ~/.bashrc with 'bash'):"
+echo "    eval \"\$(dcc completion zsh)\""
 echo "  Get started:  mkdir -p ~/dev/claude && cd ~/dev/claude && dcc create"

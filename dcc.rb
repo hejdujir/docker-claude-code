@@ -10,6 +10,7 @@ class Dcc < Formula
     bin.install "bin/dcc"
     pkgshare.install "image"
     pkgshare.install "skills"
+    generate_completions_from_executable(bin/"dcc", "completion", shells: [:bash, :zsh])
   end
 
   def caveats
