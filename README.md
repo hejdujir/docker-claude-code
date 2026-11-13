@@ -162,6 +162,27 @@ it; `dcc ps` notices there are fewer `claude` processes in the container
 than open records and hides the oldest extra ones as `gone` (`dcc ps -a`
 shows them).
 
+### Sessions don't outlive their tab
+
+Closing a terminal tab ends `docker exec` on the host, but not what it
+started inside the container – left alone, every closed tab would keep its
+Claude Code running (and holding ~300 MB) until the container stops. So dcc
+starts each session through a small launcher (`.dcc/bin/launch.sh`) that
+ends it with a SIGTERM – Claude Code saves the conversation, `claude
+--resume` brings it back – when:
+
+- **the tab is gone.** While a tab is open, dcc refreshes
+  `<home>/.dcc-tabs/<tab>` every 30 s and removes it once the tab closes;
+  the session ends ~10 s later. If the file stops changing (the host froze,
+  dcc was killed hard) it ends after 5 minutes the container was awake – a
+  sleeping Mac doesn't count.
+- **nobody typed into it for 24 hours.** Change that with
+  `DCC_IDLE_HOURS=48 dcc`, turn it off with `DCC_IDLE_HOURS=0`. Applies to
+  Claude Code sessions only, not to `dcc shell` / `exec`.
+
+Every such end is logged in `<home>/.dcc-tabs/ended.log`. Sessions started
+by an older dcc aren't covered – end them by hand or restart the container.
+
 ## Commands
 
 | | |
