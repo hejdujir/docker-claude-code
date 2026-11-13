@@ -1253,7 +1253,7 @@ render_overview() {
             # live claude processes in the container: more records than that
             # that aren't ended belong to sessions that died without saying so
             if [ -z "$live" ]; then
-                live="$(docker exec "$name" pgrep -c -x claude 2>/dev/null || true)"
+                live="$(docker exec "$name" pgrep -c -x 'claude(\.exe)?' 2>/dev/null || true)"
                 case "$live" in ''|*[!0-9]*) live="-" ;; esac
             fi
             list=""
